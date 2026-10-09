@@ -19,7 +19,9 @@ jobs:
           - os: macos-15-intel # last available Intel (x86_64) image; retires ~Aug 2027
             arch: x86_64
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # Homebrew builds every Python resource from source; on the Intel runner
+    # one install takes about 16 minutes, and the upgrade job does two.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -77,7 +79,9 @@ jobs:
       matrix:
         os: [macos-latest, macos-15-intel]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # Homebrew builds every Python resource from source; on the Intel runner
+    # one install takes about 16 minutes, and the upgrade job does two.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
