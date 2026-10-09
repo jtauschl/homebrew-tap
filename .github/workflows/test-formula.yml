@@ -37,6 +37,11 @@ jobs:
       - name: Audit the Formula
         run: brew audit --formula --strict jtauschl/local-ci-tap/openproject-ce-mcp
 
+      - name: Take over the runner's Python links
+        # The Intel image ships python.org's Python with links in
+        # /usr/local/bin, where Homebrew must link its own python@3.12.
+        run: brew install python@3.12 || brew link --overwrite python@3.12
+
       - name: Install from source
         run: brew install --build-from-source jtauschl/local-ci-tap/openproject-ce-mcp
 
@@ -94,6 +99,11 @@ jobs:
           fi
           echo "previous_version=$previous_version" >> "$GITHUB_OUTPUT"
           echo "current_version=$current_version" >> "$GITHUB_OUTPUT"
+
+      - name: Take over the runner's Python links
+        # The Intel image ships python.org's Python with links in
+        # /usr/local/bin, where Homebrew must link its own python@3.12.
+        run: brew install python@3.12 || brew link --overwrite python@3.12
 
       - name: Install the previous version
         run: |
