@@ -1,86 +1,109 @@
-# homebrew-tap
+<p align="center">
+  <img src="img/banner.jpg" alt="A tap filling glass bottles with glowing package cubes on a workshop shelf, next to a green check mark." width="960">
+</p>
 
-A dedicated Homebrew tap for [openproject-ce-mcp](https://github.com/jtauschl/openproject-ce-mcp), an MCP server for OpenProject Community Edition.
+# jtauschl/tap
+
+Homebrew formulae for my command-line tools, for macOS on Apple Silicon and
+Intel. The repository is `jtauschl/homebrew-tap`; Homebrew shortens that to the
+tap name `jtauschl/tap`.
+
+## Formulae
+
+| Formula | Description | Source |
+| --- | --- | --- |
+| [`openproject-ce-mcp`](Formula/openproject-ce-mcp.rb) | MCP server for OpenProject Community Edition | [GitHub](https://github.com/jtauschl/openproject-ce-mcp) · [PyPI](https://pypi.org/project/openproject-ce-mcp/) |
 
 ## Install
 
 ```bash
 brew tap jtauschl/tap
+brew trust --formula jtauschl/tap/<formula>
+brew install <formula>
+```
+
+Homebrew installs a formula from a third-party tap only after you trust it.
+`brew trust --formula` trusts that one formula; `brew trust jtauschl/tap`
+trusts every formula in this tap, including ones added later.
+
+## Upgrade and uninstall
+
+```bash
+brew update
+brew upgrade <formula>
+
+brew uninstall <formula>
+brew untap jtauschl/tap   # once no formula from this tap is installed
+```
+
+## openproject-ce-mcp
+
+```bash
+brew tap jtauschl/tap
 brew trust --formula jtauschl/tap/openproject-ce-mcp
 brew install openproject-ce-mcp
+openproject-ce-mcp configure
 ```
 
-Homebrew loads formulae from a third-party tap only after you trust them;
-`brew trust --formula` trusts this one formula, not the whole tap.
+`configure` writes the MCP client configuration; see the project's
+[installation guide](https://github.com/jtauschl/openproject-ce-mcp/blob/main/docs/installation.md).
+Before uninstalling, remove that configuration first, as described in its
+[uninstall section](https://github.com/jtauschl/openproject-ce-mcp/blob/main/docs/installation.md#uninstall).
 
-## Upgrade
+The formula installs into its own virtual environment on Homebrew's
+`python@3.12`, independent of any other Python on the machine.
+
+## How formulae are updated
+
+A formula follows its project's releases. `main` is what `brew update`
+delivers, so a formula is tested before it lands there:
+
+1. On a branch, bump the formula's `url` and `sha256` to the new release;
+   for a Python formula, regenerate its `resource` blocks (below).
+2. Run the **Test formulae** workflow on that branch (Actions, Run workflow,
+   pick the branch and the formula name). It styles and audits the formula,
+   installs it from source on Apple Silicon and Intel, runs its test block
+   and, for a formula published on PyPI, installs the previous release and
+   upgrades it on Apple Silicon.
+3. Fast-forward `main` to the branch once it passes.
+
+A push to `main` that changes a formula or the CI runs the same workflow
+again, for the formulae it touched (all of them when the CI changed).
+
+Another repository's release pipeline can run the same tests before it pushes
+a formula, by calling the workflow:
+
+```yaml
+jobs:
+  test-formula:
+    uses: jtauschl/homebrew-tap/.github/workflows/test-formulae.yml@main
+    with:
+      formula: <formula>
+      formula-artifact: <artifact holding the rendered <formula>.rb>
+```
+
+### Python formulae
+
+The `resource` blocks are generated, never edited by hand:
 
 ```bash
-brew upgrade openproject-ce-mcp
+brew tap-new jtauschl/local --no-git
+cp Formula/<formula>.rb "$(brew --repo jtauschl/local)/Formula/"
+brew trust jtauschl/local
+brew update-python-resources --ignore-main-package-cooldown \
+  --exclude-packages=pywin32 jtauschl/local/<formula>
+cp "$(brew --repo jtauschl/local)/Formula/<formula>.rb" Formula/
 ```
 
-## Uninstall
+- Homebrew loads a formula only from a trusted tap, so the formula is copied
+  into a local one first.
+- Homebrew resolves only packages that have been on PyPI for a day.
+  `--ignore-main-package-cooldown` lifts that for the formula's own, just
+  released package; every dependency keeps the cooldown.
+- `pywin32` is a Windows-only dependency and has no place in a macOS formula.
 
-```bash
-brew uninstall openproject-ce-mcp
-brew untap jtauschl/tap  # if you don't use any other formula from this tap
-```
+## Why a tap and not Homebrew Core
 
-If you previously ran `openproject-ce-mcp configure`, remove the generated
-client configuration first — see the [main project's installation
-docs](https://github.com/jtauschl/openproject-ce-mcp/blob/main/docs/installation.md#uninstall)
-for the exact steps.
-
-## Verify
-
-```bash
-openproject-ce-mcp --version
-openproject-ce-mcp configure --help
-openproject-ce-mcp doctor --help
-```
-
-## Why a dedicated tap, not Homebrew Core
-
-Homebrew Core has strict maintenance and notability requirements: a formula
-must be widely used, and the maintainer commits to Core's own release cadence
-and heavier review/CI process. A dedicated tap is the standard bridge most
-PyPI-distributed CLI tools use before, if ever, graduating to Core — it
-provides a native `brew install` path today on both Apple Silicon and Intel
-macOS, with full control over release cadence and Formula content, while
-[PyPI](https://pypi.org/project/openproject-ce-mcp/) stays the canonical
-publication source. A Core submission is worth revisiting only once real,
-sustained external usage justifies Core's heavier maintenance commitment.
-
-## Formula maintenance
-
-The Formula's `resource` blocks are machine-generated via Homebrew's own
-`brew update-python-resources`, following the actual PyPI dependency
-resolution at generation time — not a copy of this project's own `uv.lock`,
-which pins exact versions for its own CI. Never hand-edit the `resource`
-blocks; regenerate them instead:
-
-```bash
-brew update-python-resources \
-  --version=<new version> \
-  --package-name=openproject-ce-mcp \
-  --exclude-packages=pywin32 \
-  Formula/openproject-ce-mcp.rb
-```
-
-`pywin32` is excluded deliberately: it's a Windows-only dependency of `mcp`
-(platform-marker-gated) and has no place in a macOS Formula.
-
-A pull request against this Formula is opened automatically after each
-`openproject-ce-mcp` PyPI release (see that project's `publish.yml`). Review
-the diff before merging — this bumps `url`/`sha256` and regenerates every
-`resource` block, so a passing CI run on both architectures (see below)
-before merge is the real safety net, not a manual read of 28 hashes.
-
-## CI
-
-`.github/workflows/test-formula.yml` verifies a real `brew install` from this
-tap on both Apple Silicon (`macos-latest`) and Intel (`macos-15-intel`) macOS,
-runs `--version`/`configure --help`/`doctor --help`, and exercises the
-upgrade and uninstall flows — gated to pull requests and manual dispatch
-only, never a direct push to `main`, matching this tap's one real cost
-concern (macOS CI minutes).
+Homebrew Core requires a tool to be widely used and maintained to Core's
+cadence and review. A tap gives a native `brew install` today, with releases
+under the project's control, while PyPI and GitHub stay the canonical sources.
