@@ -1,0 +1,267 @@
+name: Test formulae
+
+on:
+  # A project's release pipeline calls this with the formula it just rendered
+  # and pushes it to main only when every job passes.
+  workflow_call:
+    inputs:
+      formula:
+        description: Name of the formula to test
+        required: true
+        type: string
+      formula-artifact:
+        description: Artifact of the calling run that holds the rendered <formula>.rb
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      formula:
+        description: Formula to test (empty tests every formula)
+        required: false
+        default: ""
+  push:
+    branches: [main]
+    paths: ["Formula/**", ".github/workflows/**"]
+
+permissions:
+  contents: read
+
+env:
+  TAP_REPOSITORY: jtauschl/homebrew-tap
+
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      formulae: ${{ steps.pick.outputs.formulae }}
+      pypi_formulae: ${{ steps.pick.outputs.pypi_formulae }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # A called workflow checks out the caller's repository by default,
+          # and the caller's commit means nothing here: a call tests the
+          # formula it hands over against the tap's main, the tap's own
+          # events test the commit that triggered them.
+          repository: ${{ env.TAP_REPOSITORY }}
+          ref: ${{ inputs.formula-artifact != '' && 'main' || github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: inputs.formula-artifact != ''
+        with:
+          name: ${{ inputs.formula-artifact }}
+          path: Formula
+
+      - name: Pick the formulae to test
+        id: pick
+        env:
+          # In a called workflow the event is the caller's, so a call is told
+          # apart by its inputs, never by github.event_name.
+          CALLED: ${{ inputs.formula-artifact != '' }}
+          EVENT: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          INPUT_FORMULA: ${{ inputs.formula }}
+        # A call tests the one formula it hands over. A push tests the
+        # formulae it changes, and every formula when it changes the CI
+        # itself, since that change must be proven too.
+        run: |
+          if [ "$CALLED" = "true" ]; then
+            files="Formula/$INPUT_FORMULA.rb"
+            [ -f "$files" ] || { echo "::error::No formula $files" >&2; exit 1; }
+          elif [ "$EVENT" = "push" ]; then
+            changed="$(git diff --name-only "$BEFORE_SHA" HEAD)"
+            if printf '%s\n' "$changed" | grep -q '^\.github/'; then
+              files="$(ls Formula/*.rb)"
+            else
+              files="$(printf '%s\n' "$changed" | grep -E '^Formula/[^/]+\.rb$' || true)"
+            fi
+          elif [ -n "$INPUT_FORMULA" ]; then
+            files="Formula/$INPUT_FORMULA.rb"
+            [ -f "$files" ] || { echo "::error::No formula $files" >&2; exit 1; }
+          else
+            files="$(ls Formula/*.rb)"
+          fi
+          python3 - "$files" <<'PY' >> "$GITHUB_OUTPUT"
+          import json, pathlib, sys
+          paths = [pathlib.Path(p) for p in sys.argv[1].split() if p]
+          names = sorted(p.stem for p in paths if p.exists())
+          pypi = sorted(p.stem for p in paths if p.exists() and "files.pythonhosted.org" in p.read_text())
+          print(f"formulae={json.dumps(names)}")
+          print(f"pypi_formulae={json.dumps(pypi)}")
+          PY
+
+  install:
+    needs: select
+    if: needs.select.outputs.formulae != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        formula: ${{ fromJSON(needs.select.outputs.formulae) }}
+        os: [macos-latest, macos-15-intel] # Apple Silicon; last Intel image, retires ~Aug 2027
+    runs-on: ${{ matrix.os }}
+    # Homebrew builds every Python resource from source; on the Intel runner
+    # one install takes about 16 minutes.
+    timeout-minutes: 45
+    env:
+      FORMULA: jtauschl/local-ci-tap/${{ matrix.formula }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ env.TAP_REPOSITORY }}
+          ref: ${{ inputs.formula-artifact != '' && 'main' || github.sha }}
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: inputs.formula-artifact != ''
+        with:
+          name: ${{ inputs.formula-artifact }}
+          path: Formula
+
+      - name: Tap this checkout
+        # Homebrew checks, loads and installs formulae only from a tap, and
+        # only from one the user trusts, a tap created by tap-new included.
+        run: |
+          brew tap-new jtauschl/local-ci-tap --no-git
+          cp Formula/*.rb "$(brew --repo jtauschl/local-ci-tap)/Formula/"
+          brew trust jtauschl/local-ci-tap
+
+      - name: Take over the runner's Python links
+        # The Intel image ships python.org's Python with links in
+        # /usr/local/bin, where Homebrew must link its own python@3.x.
+        run: |
+          python="$(grep -oE 'depends_on "python@[0-9.]+"' "Formula/${{ matrix.formula }}.rb" | grep -oE 'python@[0-9.]+' || true)"
+          if [ -n "$python" ]; then
+            brew install "$python" || brew link --overwrite "$python"
+          fi
+
+      - name: Style-check the formula
+        run: brew style --formula "$FORMULA"
+
+      - name: Audit the formula
+        run: brew audit --formula --strict "$FORMULA"
+
+      - name: Install from source
+        run: brew install --build-from-source "$FORMULA"
+
+      - name: Run the formula's test block
+        run: brew test "$FORMULA"
+
+      - name: No install step outside the pinned resources
+        run: |
+          if grep -qE '(^|[^a-zA-Z_])(pip install|system\s+"pip")' "Formula/${{ matrix.formula }}.rb"; then
+            echo "::error::The formula installs with pip outside virtualenv_install_with_resources" >&2
+            exit 1
+          fi
+
+      - name: Uninstall
+        run: brew uninstall "$FORMULA"
+
+  upgrade:
+    needs: select
+    if: needs.select.outputs.pypi_formulae != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        formula: ${{ fromJSON(needs.select.outputs.pypi_formulae) }}
+        # Upgrading does not depend on the architecture, and macOS minutes are
+        # the expensive ones: the Intel runner only installs (above).
+        os: [macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      FORMULA: jtauschl/local-ci-tap/${{ matrix.formula }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ env.TAP_REPOSITORY }}
+          ref: ${{ inputs.formula-artifact != '' && 'main' || github.sha }}
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: inputs.formula-artifact != ''
+        with:
+          name: ${{ inputs.formula-artifact }}
+          path: Formula
+
+      - name: Tap this checkout
+        run: |
+          brew tap-new jtauschl/local-ci-tap --no-git
+          brew trust jtauschl/local-ci-tap
+
+      - name: Resolve the current and the previous release
+        id: versions
+        run: |
+          sdist="$(grep -m1 -oE '[^/"]+\.tar\.gz"' "Formula/${{ matrix.formula }}.rb" | tr -d '"')"
+          current="$(printf '%s' "$sdist" | grep -oE '[0-9]+(\.[0-9]+)+\.tar\.gz$' | sed 's/\.tar\.gz$//')"
+          package="${sdist%-"$current".tar.gz}"
+          previous="$(curl -sf "https://pypi.org/pypi/$package/json" | python3 -c '
+          import json, sys
+          current = tuple(map(int, sys.argv[1].split(".")))
+          releases = [v for v in json.load(sys.stdin)["releases"] if v.replace(".", "").isdigit()]
+          older = [v for v in releases if tuple(map(int, v.split("."))) < current]
+          print(max(older, key=lambda v: tuple(map(int, v.split(".")))) if older else "")
+          ' "$current")"
+          if [ -z "$previous" ]; then
+            echo "::error::No release of $package older than $current on PyPI" >&2
+            exit 1
+          fi
+          {
+            echo "package=$package"
+            echo "current=$current"
+            echo "previous=$previous"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Take over the runner's Python links
+        run: |
+          python="$(grep -oE 'depends_on "python@[0-9.]+"' "Formula/${{ matrix.formula }}.rb" | grep -oE 'python@[0-9.]+' || true)"
+          if [ -n "$python" ]; then
+            brew install "$python" || brew link --overwrite "$python"
+          fi
+
+      - name: Install the previous release
+        env:
+          PACKAGE: ${{ steps.versions.outputs.package }}
+          PREVIOUS: ${{ steps.versions.outputs.previous }}
+        run: |
+          local_formula="$(brew --repo jtauschl/local-ci-tap)/Formula/${{ matrix.formula }}.rb"
+          cp "Formula/${{ matrix.formula }}.rb" "$local_formula"
+          read -r url sha256 < <(curl -sf "https://pypi.org/pypi/$PACKAGE/$PREVIOUS/json" | python3 -c '
+          import json, sys
+          sdist = next(f for f in json.load(sys.stdin)["urls"] if f["packagetype"] == "sdist")
+          print(sdist["url"], sdist["digests"]["sha256"])
+          ')
+          sed -i '' "s|^  url \".*\"|  url \"$url\"|" "$local_formula"
+          sed -i '' "s|^  sha256 \".*\"|  sha256 \"$sha256\"|" "$local_formula"
+          brew install --build-from-source "$FORMULA"
+          [ "$(basename "$(realpath "$(brew --prefix "$FORMULA")")")" = "$PREVIOUS" ]
+
+      - name: Upgrade to the formula's release
+        run: |
+          cp "Formula/${{ matrix.formula }}.rb" "$(brew --repo jtauschl/local-ci-tap)/Formula/"
+          brew upgrade --build-from-source "$FORMULA"
+          # The runner does not clean up, so the old version stays installed;
+          # the active one is where the formula's opt link points.
+          [ "$(basename "$(realpath "$(brew --prefix "$FORMULA")")")" = "${{ steps.versions.outputs.current }}" ]
+          brew test "$FORMULA"
+
+      - name: Uninstall
+        run: brew uninstall "$FORMULA"
+
+  result:
+    # One fixed check a caller can depend on, while the matrix above changes
+    # with the formulae under test.
+    if: always()
+    needs: [select, install, upgrade]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed or had nothing to test
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *) exit 1 ;;
+            esac
+          done
