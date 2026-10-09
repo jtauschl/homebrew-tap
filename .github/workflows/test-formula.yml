@@ -23,17 +23,22 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Style-check the Formula
-        run: brew style --formula Formula/openproject-ce-mcp.rb
-
-      - name: Audit the Formula
-        run: brew audit --formula --strict Formula/openproject-ce-mcp.rb
-
-      - name: Tap this checkout and install from source
+      - name: Tap this checkout
+        # Homebrew checks, loads and installs formulae only from a tap, and
+        # only from one the user trusts, a tap created by tap-new included.
         run: |
           brew tap-new jtauschl/local-ci-tap --no-git
           cp Formula/openproject-ce-mcp.rb "$(brew --repo jtauschl/local-ci-tap)/Formula/"
-          brew install --build-from-source jtauschl/local-ci-tap/openproject-ce-mcp
+          brew trust jtauschl/local-ci-tap
+
+      - name: Style-check the Formula
+        run: brew style --formula jtauschl/local-ci-tap/openproject-ce-mcp
+
+      - name: Audit the Formula
+        run: brew audit --formula --strict jtauschl/local-ci-tap/openproject-ce-mcp
+
+      - name: Install from source
+        run: brew install --build-from-source jtauschl/local-ci-tap/openproject-ce-mcp
 
       - name: Run the Formula's own test block
         run: brew test jtauschl/local-ci-tap/openproject-ce-mcp
@@ -75,7 +80,7 @@ jobs:
         id: previous
         run: |
           current_version="$(grep -m1 -oE 'openproject_ce_mcp-[0-9.]+\.tar\.gz' Formula/openproject-ce-mcp.rb | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
-          all_versions="$(curl -sf https://pypi.org/pypi/openproject-ce-mcp/json | python3 -c 'import json, sys; print(" ".join(sorted(json.load(sys.stdin)["releases"], key=lambda v: tuple(map(int, v.split(".")))))))')"
+          all_versions="$(curl -sf https://pypi.org/pypi/openproject-ce-mcp/json | python3 -c 'import json, sys; print(" ".join(sorted(json.load(sys.stdin)["releases"], key=lambda v: tuple(map(int, v.split("."))))))')"
           previous_version=""
           for v in $all_versions; do
             if [ "$v" = "$current_version" ]; then
@@ -88,10 +93,12 @@ jobs:
             exit 1
           fi
           echo "previous_version=$previous_version" >> "$GITHUB_OUTPUT"
+          echo "current_version=$current_version" >> "$GITHUB_OUTPUT"
 
       - name: Install the previous version
         run: |
           brew tap-new jtauschl/local-ci-tap --no-git
+          brew trust jtauschl/local-ci-tap
           local_tap_formula="$(brew --repo jtauschl/local-ci-tap)/Formula/openproject-ce-mcp.rb"
           cp Formula/openproject-ce-mcp.rb "$local_tap_formula"
           sha256="$(curl -sf "https://pypi.org/pypi/openproject-ce-mcp/${{ steps.previous.outputs.previous_version }}/json" \
@@ -103,6 +110,7 @@ jobs:
           brew install --build-from-source jtauschl/local-ci-tap/openproject-ce-mcp
           installed="$(openproject-ce-mcp --version)"
           echo "Installed baseline: $installed"
+          [ "$installed" = "openproject-ce-mcp ${{ steps.previous.outputs.previous_version }}" ]
 
       - name: Upgrade to the current version
         run: |
@@ -114,7 +122,7 @@ jobs:
         run: |
           out="$(openproject-ce-mcp --version)"
           echo "$out"
-          echo "$out" | grep -qv "${{ steps.previous.outputs.previous_version }}"
+          [ "$out" = "openproject-ce-mcp ${{ steps.previous.outputs.current_version }}" ]
 
       - name: Uninstall
         run: brew uninstall jtauschl/local-ci-tap/openproject-ce-mcp
