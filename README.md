@@ -6,8 +6,12 @@ A dedicated Homebrew tap for [openproject-ce-mcp](https://github.com/jtauschl/op
 
 ```bash
 brew tap jtauschl/tap
+brew trust --formula jtauschl/tap/openproject-ce-mcp
 brew install openproject-ce-mcp
 ```
+
+Homebrew loads formulae from a third-party tap only after you trust them;
+`brew trust --formula` trusts this one formula, not the whole tap.
 
 ## Upgrade
 
