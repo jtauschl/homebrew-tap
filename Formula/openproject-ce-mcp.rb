@@ -3,8 +3,8 @@ class OpenprojectCeMcp < Formula
 
   desc "MCP server for OpenProject Community Edition"
   homepage "https://github.com/jtauschl/openproject-ce-mcp"
-  url "https://files.pythonhosted.org/packages/30/39/e7fe5efa69e2e9ab35e0328382a810b04bd1d75240226b8038302712e6fe/openproject_ce_mcp-0.4.3.tar.gz"
-  sha256 "24f28d318583e3be78b17ff022e897c65edbc2f0d5240429b783e0af2e560aba"
+  url "https://files.pythonhosted.org/packages/38/d8/dad8ea1543631e2b0c8a67a9e97c57035f6917cd817a6d833278f009b4dc/openproject_ce_mcp-0.4.4.tar.gz"
+  sha256 "d5c1e54b0bc894bb8142ecdd004617347bfc458ccf481bd8ed07f232f93ebc81"
   license "MIT"
 
   depends_on "rust" => :build # cryptography's maturin build needs a Rust compiler
