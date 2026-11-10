@@ -8,7 +8,7 @@ class OpenprojectCeMcp < Formula
   license "MIT"
 
   depends_on "rust" => :build # cryptography's maturin build needs a Rust compiler
-  depends_on "python@3.12"
+  depends_on "python@3.15"
 
   resource "annotated-types" do
     url "https://files.pythonhosted.org/packages/5f/56/a8120250d128bed162cd73c76d45f6ef9991f3e068f62a8ee060afa3104a/annotated_types-0.8.0.tar.gz"
