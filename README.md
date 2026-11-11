@@ -51,7 +51,7 @@ Before uninstalling, remove that configuration first, as described in its
 [uninstall section](https://github.com/jtauschl/openproject-ce-mcp/blob/main/docs/installation.md#uninstall).
 
 The formula installs into its own virtual environment on Homebrew's
-`python@3.12`, independent of any other Python on the machine.
+`python@3.13`, independent of any other Python on the machine.
 
 ## How formulae are updated
 
